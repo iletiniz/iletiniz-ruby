@@ -23,8 +23,9 @@ module Iletiniz
     # @param query [Hash, nil]
     # @param body [Object, nil]
     # @param options [RequestOptions, nil]
+    # @param retryable [Boolean] false => idempotent olmayan istek; ag/5xx hatasinda yeniden denenmez
     # @return [Hash, Array, nil] decoded JSON
-    def request(method, path, query: nil, body: nil, options: nil)
+    def request(method, path, query: nil, body: nil, options: nil, retryable: true)
       url = build_url(path, query)
 
       headers = @default_headers.dup
@@ -46,7 +47,7 @@ module Iletiniz
           begin
             @transport.send_request(method, url, headers, payload, timeout_ms)
           rescue TimeoutError, ConnectionError
-            if should_retry?(nil, attempt)
+            if retryable && should_retry?(nil, attempt)
               attempt += 1
               sleep(backoff_ms(attempt, nil) / 1000.0)
               next
@@ -65,7 +66,7 @@ module Iletiniz
           end
         end
 
-        if should_retry?(status, attempt)
+        if retryable && should_retry?(status, attempt)
           attempt += 1
           sleep(backoff_ms(attempt, response.header("retry-after")) / 1000.0)
           next

@@ -60,6 +60,24 @@ Iletiniz::Client.new(
 | `client.messages.send_bulk(...)`              | `POST /v1/messages/bulk`          |
 | `client.messages.retrieve(job_id)`            | `GET /v1/messages/{job_id}`       |
 | `client.messages.status(job_id)` (alias)      | `GET /v1/messages/{job_id}`       |
+| `client.scheduled.list(status:, limit:, offset:)` | `GET /v1/scheduled`           |
+| `client.scheduled.retrieve(id)`               | `GET /v1/scheduled/{id}`          |
+| `client.scheduled.cancel(id)`                 | `DELETE /v1/scheduled/{id}`       |
+| `client.reminders.create(params)`             | `POST /v1/reminders`              |
+| `client.reminders.list(status:, limit:, offset:)` | `GET /v1/reminders`           |
+| `client.reminders.retrieve(id)`               | `GET /v1/reminders/{id}`          |
+| `client.reminders.update(id, params)`         | `PATCH /v1/reminders/{id}`        |
+| `client.reminders.delete(id)`                 | `DELETE /v1/reminders/{id}`       |
+| `client.partner.profile`                      | `GET /v1/partner`                 |
+| `client.partner.create_account(name:, external_ref:)` | `POST /v1/partner/accounts` |
+| `client.partner.list_accounts(status:, limit:, offset:)` | `GET /v1/partner/accounts` |
+| `client.partner.retrieve_account(id)`         | `GET /v1/partner/accounts/{id}`   |
+| `client.partner.suspend_account(id)` / `unsuspend_account(id)` | `POST /v1/partner/accounts/{id}/suspend` / `unsuspend` |
+| `client.partner.create_api_key(id, name:, scopes:, test:, allowed_ips:)` | `POST /v1/partner/accounts/{id}/api-keys` |
+| `client.partner.list_api_keys(id)`            | `GET /v1/partner/accounts/{id}/api-keys` |
+| `client.partner.revoke_api_key(id, key_id)`   | `DELETE /v1/partner/accounts/{id}/api-keys/{keyId}` |
+| `client.partner.transfer_quota(id, amount)`   | `POST /v1/partner/accounts/{id}/quota-transfers` |
+| `client.partner.create_whatsapp_signup_link(id)` | `POST /v1/partner/accounts/{id}/whatsapp-signup` |
 
 ### Tek mesaj göndermek
 
@@ -142,6 +160,108 @@ client.messages.send_bulk(
 )
 ```
 
+### Onaylı WhatsApp şablonu göndermek
+
+Meta'da onaylanmış (APPROVED) bir şablonu `whatsapp_template:` ile gönderin. `components`, Meta Cloud API'nin `template.components` biçimini izler. `sender:`, WhatsApp'ta gönderici numaranın Meta `phone_number_id` değeridir (verilmezse bağlantının numarası kullanılır).
+
+```ruby
+res = client.messages.send(
+  to: "+905551234567",
+  provider: "whatsapp",
+  sender: "123456789012345",
+  whatsapp_template: {
+    name: "randevu_hatirlatma",
+    language: "tr",
+    components: [
+      { type: "body", parameters: [{ type: "text", text: "Ayşe" }, { type: "text", text: "5 Kasım 10:00" }] }
+    ]
+  }
+)
+puts res["whatsapp_template"] # "randevu_hatirlatma"
+```
+
+Toplu gönderimde alıcı başına değişkenleri `items[].whatsappComponents` ile verin (üst seviye `components` varsayılandır):
+
+```ruby
+client.messages.send_bulk(
+  provider: "whatsapp",
+  whatsapp_template: { name: "kargo_cikti", language: "tr" },
+  items: [
+    { to: "+905551112233", whatsappComponents: [{ type: "body", parameters: [{ type: "text", text: "TR123" }] }] },
+    { to: "+905554445566", whatsappComponents: [{ type: "body", parameters: [{ type: "text", text: "TR456" }] }] }
+  ]
+)
+```
+
+### Zamanlanmış gönderim
+
+`scheduled_at:` verilirse mesaj şimdi gönderilmez; yanıt `scheduled_id` içerir. Saat dilimli ISO 8601 dizesi veya `Time` kabul edilir (en az 30 sn, en fazla 90 gün sonrası).
+
+```ruby
+job = client.messages.send(
+  to: "+905551234567",
+  body: "Yarınki randevunuzu hatırlatırız.",
+  scheduled_at: Time.new(2026, 11, 5, 9, 0, 0, "+03:00")
+)
+
+pending = client.scheduled.list(status: "scheduled")
+client.scheduled.cancel(job["scheduled_id"])
+```
+
+### Hatırlatma kuralları
+
+Kural alanları API ile aynı adlarla (camelCase) verilir:
+
+```ruby
+# Randevudan 24 saat ve 2 saat önce
+client.reminders.create(
+  type: "one_time",
+  name: "Randevu #4411",
+  eventAt: "2026-11-10T14:00:00+03:00",
+  offsetsMinutes: [1440, 120],
+  message: { to: "+905551234567", body: "Randevunuz 10 Kasım 14:00." }
+)
+
+# Her pazartesi 09:30 (Europe/Istanbul)
+rule = client.reminders.create(
+  type: "recurring",
+  name: "Haftalık bülten",
+  frequency: "weekly",
+  dayOfWeek: 1,
+  timeOfDay: "09:30",
+  message: { to: "+905551234567", template: "haftalik_bulten" }
+)
+
+client.reminders.update(rule["id"], { status: "paused" })
+client.reminders.update(rule["id"], {}, clear_ends_at: true) # bitiş tarihini kaldır
+client.reminders.delete(rule["id"])
+```
+
+### Partner API
+
+Partner hesabının `partner:manage` yetkili canlı anahtarıyla:
+
+```ruby
+partner = Iletiniz::Client.new(api_key: ENV.fetch("ILETINIZ_PARTNER_KEY"))
+
+child = partner.partner.create_account(name: "Klinik Ankara", external_ref: "klinik-42")
+key = partner.partner.create_api_key(child["id"], name: "prod")
+# key["key"] yalnız bu yanıtta döner; güvenli şekilde saklayın.
+
+# Alt hesabın anahtarlarını listeleyin (düz metin anahtar dönmez, yalnız key_prefix) ve gerekirse iptal edin:
+keys = partner.partner.list_api_keys(child["id"])["data"]
+partner.partner.revoke_api_key(child["id"], keys[0]["id"]) # idempotent: iptal edilmişse aynı nesne döner
+
+partner.partner.transfer_quota(child["id"], 5000)
+link = partner.partner.create_whatsapp_signup_link(child["id"])
+# link["url"] müşterinize iletilir (24 saat geçerli, tek kullanımlık).
+
+# Alt hesap adına gönderim, alt hesabın anahtarıyla yapılır:
+child_client = Iletiniz::Client.new(api_key: key["key"])
+```
+
+`transfer_quota`, `create_account` ve `create_api_key` istekleri hata durumunda otomatik yeniden denenmez (çift aktarım/çift kayıt riskine karşı).
+
 ### Mesaj durumunu sorgulamak
 
 ```ruby
@@ -214,6 +334,8 @@ end
 
 client = Iletiniz::Client.new(api_key: "iltz_test_xxx", transport: FakeTransport.new)
 ```
+
+SDK'nın kendi testleri: `bundle exec rspec` (veya `rspec`).
 
 ## Katkıda Bulunma / Contributing
 

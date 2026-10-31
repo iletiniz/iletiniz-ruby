@@ -8,6 +8,10 @@ require_relative "iletiniz/net_http_transport"
 require_relative "iletiniz/http_client"
 require_relative "iletiniz/resources/messages"
 require_relative "iletiniz/resources/health"
+require_relative "iletiniz/resources/util"
+require_relative "iletiniz/resources/scheduled"
+require_relative "iletiniz/resources/reminders"
+require_relative "iletiniz/resources/partner"
 require_relative "iletiniz/client"
 
 # Iletiniz API resmi Ruby SDK'si.

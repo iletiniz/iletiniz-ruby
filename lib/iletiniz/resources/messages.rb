@@ -17,34 +17,45 @@ module Iletiniz
       # `body` veya `template` alanlarindan **tam olarak biri** verilmelidir.
       # `variables` yalnizca `template` ile birlikte kullanilabilir.
       #
-      # @param to [String] Alici telefon numarasi (E.164 onerilir)
+      # @param to [String] Alici telefon numarasi (E.164 onerilir; 05551234567, 5551234567 ve 905551234567 gibi Turkiye yerel bicimleri de kabul edilir)
       # @param body [String, nil] Duz metin govde
       # @param template [String, nil] Template anahtari
       # @param variables [Hash, nil] Yalnizca template ile birlikte kullanilabilir
-      # @param sender [String, nil] Gonderici adi
+      # @param whatsapp_template [Hash, nil] Meta onayli WhatsApp sablonu:
+      #   { name:, language:, components: [...] } (components Meta Cloud API bicimi).
+      #   body/template ile birlikte kullanilamaz.
+      # @param sender [String, nil] SMS: gonderici basligi. WhatsApp: Meta phone_number_id
       # @param provider [String, nil] Belirli bir provider secimi
+      # @param scheduled_at [String, Time, nil] Ileri tarihli gonderim (saat dilimli ISO 8601).
+      #   Verilirse yanit scheduled_id icerir.
       # @param iys [Boolean, nil] IYS izni. true => ticari (sağlayıcının IYS filtresi
       #   devreye girer); false/nil => bilgilendirme (IYS sorgusu yok). Yalnızca SMS
       #   sağlayıcılarında işlenir; WhatsApp/Telegram için yok sayılır.
       # @param options [RequestOptions, nil]
       # @return [Hash]
-      def send(to:, body: nil, template: nil, variables: nil, sender: nil, provider: nil, iys: nil, options: nil)
-        params = { to: to, body: body, template: template, variables: variables, sender: sender, provider: provider, iys: iys }
+      def send(to:, body: nil, template: nil, variables: nil, whatsapp_template: nil, sender: nil, provider: nil,
+               iys: nil, scheduled_at: nil, options: nil)
+        params = { to: to, body: body, template: template, variables: variables, whatsappTemplate: whatsapp_template,
+                   sender: sender, provider: provider, iys: iys, scheduledAt: iso_time(scheduled_at) }
         validate_send!(params)
         @http.request("POST", "/v1/messages", body: strip_nil(params), options: options)
       end
 
       # Tek istekte birden fazla mesaj gonderir (en fazla 200 oge).
       #
-      # @param items [Array<Hash>] :to (zorunlu), :body, :variables anahtarlarini destekler
+      # @param items [Array<Hash>] :to (zorunlu), :body, :variables, :whatsappComponents anahtarlarini destekler
       # @param template [String, nil]
+      # @param whatsapp_template [Hash, nil] bkz. {#send}; components tum alicilar icin varsayilan
+      # @param scheduled_at [String, Time, nil] bkz. {#send}
       # @param sender [String, nil]
       # @param provider [String, nil]
       # @param iys [Boolean, nil] IYS izni — bkz. {#send}. Tüm batch için tek deger.
       # @param options [RequestOptions, nil]
       # @return [Hash]
-      def send_bulk(items:, template: nil, sender: nil, provider: nil, iys: nil, options: nil)
-        params = { provider: provider, sender: sender, template: template, iys: iys, items: items }
+      def send_bulk(items:, template: nil, whatsapp_template: nil, sender: nil, provider: nil, iys: nil,
+                    scheduled_at: nil, options: nil)
+        params = { provider: provider, sender: sender, template: template, whatsappTemplate: whatsapp_template,
+                   iys: iys, scheduledAt: iso_time(scheduled_at), items: items }
         validate_bulk!(params)
 
         cleaned_items = items.map { |item| strip_nil(item) }
@@ -80,8 +91,9 @@ module Iletiniz
         has_body = params[:body].is_a?(String) && !params[:body].empty?
         has_template = params[:template].is_a?(String) && !params[:template].empty?
 
-        if has_body == has_template
-          raise Error, "'body' veya 'template' alanlarindan tam olarak biri zorunludur."
+        has_wa = !params[:whatsappTemplate].nil?
+        if [has_body, has_template, has_wa].count(true) != 1
+          raise Error, "'body', 'template' veya 'whatsappTemplate' alanlarindan tam olarak biri zorunludur."
         end
 
         if !params[:variables].nil? && !has_template
@@ -107,6 +119,8 @@ module Iletiniz
         end
 
         using_template = params[:template].is_a?(String) && !params[:template].empty?
+        using_wa = !params[:whatsappTemplate].nil?
+        raise Error, "'template' ve 'whatsappTemplate' birlikte kullanilamaz." if using_template && using_wa
 
         items.each_with_index do |item, i|
           raise Error, "items[#{i}] bir Hash olmalidir." unless item.is_a?(Hash)
@@ -119,7 +133,16 @@ module Iletiniz
           has_body_key = item.key?(:body) || item.key?("body")
           has_vars_key = item.key?(:variables) || item.key?("variables")
 
-          if using_template
+          has_wa_key = item.key?(:whatsappComponents) || item.key?("whatsappComponents")
+          if has_wa_key && !using_wa
+            raise Error, "items[#{i}].whatsappComponents yalnizca 'whatsappTemplate' ile kullanilabilir."
+          end
+
+          if using_wa
+            if has_body_key || has_vars_key
+              raise Error, "'whatsappTemplate' verildi: items[#{i}].body ve variables kullanilamaz."
+            end
+          elsif using_template
             if has_body_key
               raise Error, "Ust seviye 'template' verildi: items[#{i}].body kullanilamaz."
             end
@@ -133,6 +156,10 @@ module Iletiniz
             end
           end
         end
+      end
+
+      def iso_time(value)
+        value.respond_to?(:iso8601) ? value.iso8601 : value
       end
 
       def strip_nil(hash)

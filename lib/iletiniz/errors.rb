@@ -70,7 +70,15 @@ module Iletiniz
 
       case body
       when Hash
-        code = body["error"] if body["error"].is_a?(String)
+        err = body["error"]
+        if err.is_a?(String)
+          # Dogrulama zarfi: {"error": "validation_failed", "message": "..."}
+          code = err
+        elsif err.is_a?(Hash)
+          # Domain zarfi: {"error": {"code": "...", "message": "..."}}
+          code = err["code"] if err["code"].is_a?(String)
+          message = err["message"] if err["message"].is_a?(String)
+        end
         message = body["message"] if body["message"].is_a?(String)
       when String
         message = body unless body.empty?

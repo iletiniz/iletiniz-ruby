@@ -16,6 +16,12 @@ module Iletiniz
     attr_reader :messages
     # @return [Resources::Health]
     attr_reader :health
+    # @return [Resources::Scheduled]
+    attr_reader :scheduled
+    # @return [Resources::Reminders]
+    attr_reader :reminders
+    # @return [Resources::Partner]
+    attr_reader :partner
 
     # @param api_key [String, nil] iltz_live_... veya iltz_test_... formatinda anahtar
     # @param base_url [String, nil] varsayilan https://api.iletiniz.com
@@ -47,6 +53,9 @@ module Iletiniz
 
       @messages = Resources::Messages.new(http)
       @health = Resources::Health.new(http)
+      @scheduled = Resources::Scheduled.new(http)
+      @reminders = Resources::Reminders.new(http)
+      @partner = Resources::Partner.new(http)
     end
   end
 end
